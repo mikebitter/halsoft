@@ -1,62 +1,41 @@
 const express = require('express');
 const multer = require('multer');
-const { PDFDocument, rgb, degrees } = require('pdf-lib');
+const { PDFDocument, rgb } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ storage: multer.memoryStorage() });
 
-// Serve the form HTML at the root
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.post('/sign-pdf', upload.single('pdf'), async (req, res) => {
+    console.log("Uploading PDF file...");
+    console.log(req.file); // לוג של הקובץ המתקבל
+
     try {
-        console.log('Uploading PDF file...');
-        const pdfPath = path.join(__dirname, req.file.path);
-        const existingPdfBytes = fs.readFileSync(pdfPath);
-        console.log('PDF file uploaded successfully, loading PDF document...');
-
-        // Load a PDFDocument from the existing PDF bytes with ignoreEncryption option
-        const pdfDoc = await PDFDocument.load(existingPdfBytes, { ignoreEncryption: true });
-        console.log('PDF document loaded successfully, preparing to sign...');
-
-        // Add a new page to the PDF
+        const pdfDoc = await PDFDocument.load(req.file.buffer);
         const pages = pdfDoc.getPages();
         const firstPage = pages[0];
-        const { width, height } = firstPage.getSize();
 
-        // Draw a string of text diagonally across the first page
-        firstPage.drawText('Signed by My App', {
-            x: width / 2 - 100,
-            y: height / 2,
-            size: 50,
-            color: rgb(0, 0, 0), // Using rgb function from pdf-lib
-            rotate: degrees(45), // Correct usage of rotation in degrees
+        // הוספת טקסט לחתימה
+        firstPage.drawText('Signed by Your Name', {
+            x: 50,
+            y: 700,
+            size: 30,
+            color: rgb(0, 0, 0),
         });
-        console.log('Text added to PDF, saving...');
 
-        // Serialize the PDFDocument to bytes (a Uint8Array)
+        // שמירת הקובץ החתום
         const pdfBytes = await pdfDoc.save();
-        console.log('PDF saved successfully.');
 
-        // Save the signed PDF
-        const outputPath = path.join(__dirname, 'signed_output.pdf');
-        fs.writeFileSync(outputPath, pdfBytes);
-
-        // Send the signed PDF to the client
-        res.download(outputPath, 'signed_output.pdf', (err) => {
-            if (err) {
-                console.error('Failed to send signed PDF:', err);
-                res.status(500).send('Failed to send signed PDF.');
-            }
-        });
-
+        res.contentType("application/pdf");
+        res.send(pdfBytes);
     } catch (err) {
-        console.error('Failed to sign the PDF:', err);
-        res.status(500).send('Failed to sign the PDF.');
+        console.error("Failed to sign the PDF:", err);
+        res.status(500).send("Failed to sign the PDF.");
     }
 });
 
