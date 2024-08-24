@@ -5,41 +5,63 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ dest: 'uploads/' });
 
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.send(`
+        <h1>Upload a PDF to Sign</h1>
+        <form method="POST" enctype="multipart/form-data" action="/sign-pdf">
+            <input type="file" name="pdf" />
+            <button type="submit">Upload and Sign</button>
+        </form>
+    `);
 });
 
 app.post('/sign-pdf', upload.single('pdf'), async (req, res) => {
-    console.log("Uploading PDF file...");
-    console.log(req.file); // לוג של הקובץ המתקבל
-
     try {
-        const pdfDoc = await PDFDocument.load(req.file.buffer);
+        console.log("Uploading PDF file...");
+        console.log(req.file);
+
+        // Load the PDF document
+        const pdfPath = path.join(__dirname, req.file.path);
+        const existingPdfBytes = fs.readFileSync(pdfPath);
+        const pdfDoc = await PDFDocument.load(existingPdfBytes);
+
+        // Prepare to sign the first page
         const pages = pdfDoc.getPages();
         const firstPage = pages[0];
+        const { width, height } = firstPage.getSize();
 
-        // הוספת טקסט לחתימה
         firstPage.drawText('Signed by Your Name', {
             x: 50,
-            y: 700,
+            y: height - 100,
             size: 30,
-            color: rgb(0, 0, 0),
+            color: rgb(1, 0, 0),
         });
 
-        // שמירת הקובץ החתום
+        // Save the signed PDF
         const pdfBytes = await pdfDoc.save();
+        const outputPath = path.join(__dirname, 'signed_document.pdf');
+        fs.writeFileSync(outputPath, pdfBytes);
 
-        res.contentType("application/pdf");
-        res.send(pdfBytes);
+        // Remove the original uploaded file
+        fs.unlinkSync(pdfPath);
+
+        res.send(`
+            <h1>PDF signed successfully!</h1>
+            <p><a href="/download-signed-pdf">Download signed PDF</a></p>
+        `);
     } catch (err) {
         console.error("Failed to sign the PDF:", err);
-        res.status(500).send("Failed to sign the PDF.");
+        res.status(500).send('Failed to sign the PDF.');
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`App listening at http://localhost:${PORT}`);
+app.get('/download-signed-pdf', (req, res) => {
+    const filePath = path.join(__dirname, 'signed_document.pdf');
+    res.download(filePath);
+});
+
+app.listen(3000, () => {
+    console.log('App listening at http://localhost:3000');
 });
