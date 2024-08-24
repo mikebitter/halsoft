@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Signing App</title>
+</head>
+<body>
+    <h1>Upload a PDF to Sign</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" id="pdf" name="pdf" accept="application/pdf" required>
+        <button type="submit">Upload and Sign</button>
+    </form>
+    <p id="responseMessage"></p>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const responseMessage = document.getElementById('responseMessage');
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const formData = new FormData(form);
+
+            try {
+                const response = await fetch('/sign-pdf', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'signed_document.pdf';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    responseMessage.textContent = 'PDF signed successfully!';
+                } else {
+                    responseMessage.textContent = 'Failed to sign the PDF.';
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                responseMessage.textContent = 'An error occurred while signing the PDF.';
+            }
+        });
+    </script>
+</body>
+</html>
