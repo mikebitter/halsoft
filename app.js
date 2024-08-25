@@ -1,65 +1,67 @@
 const express = require('express');
-const multer = require('multer');
-const { PDFDocument, rgb } = require('pdf-lib');
+const fileUpload = require('express-fileupload');
 const fs = require('fs');
 const path = require('path');
+const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+const fontkit = require('@pdf-lib/fontkit');
+const os = require('os');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+app.use(fileUpload());
+app.use(express.static('public'));
 
+// דף הבית שמציג טופס להעלאת קובץ
 app.get('/', (req, res) => {
     res.send(`
         <h1>Upload a PDF to Sign</h1>
-        <form method="POST" enctype="multipart/form-data" action="/sign-pdf">
+        <form ref='uploadForm' 
+            id='uploadForm' 
+            action='/sign-pdf' 
+            method='post' 
+            encType="multipart/form-data">
             <input type="file" name="pdf" />
-            <button type="submit">Upload and Sign</button>
-        </form>
+            <input type='submit' value='Upload and Sign' />
+        </form>     
     `);
 });
 
-app.post('/sign-pdf', upload.single('pdf'), async (req, res) => {
-    try {
-        console.log("Uploading PDF file...");
-        console.log(req.file);
+app.post('/sign-pdf', async (req, res) => {
+    console.log("Uploading PDF file...");
+    console.log(req.files.pdf); // לוג של הקובץ המתקבל
 
-        // Load the PDF document
-        const pdfPath = path.join(__dirname, req.file.path);
-        const existingPdfBytes = fs.readFileSync(pdfPath);
-        const pdfDoc = await PDFDocument.load(existingPdfBytes);
-
-        // Prepare to sign the first page
-        const pages = pdfDoc.getPages();
-        const firstPage = pages[0];
-        const { width, height } = firstPage.getSize();
-
-        firstPage.drawText('Signed by Your Name', {
-            x: 50,
-            y: height - 100,
-            size: 30,
-            color: rgb(1, 0, 0),
-        });
-
-        // Save the signed PDF
-        const pdfBytes = await pdfDoc.save();
-        const outputPath = path.join(__dirname, 'signed_document.pdf');
-        fs.writeFileSync(outputPath, pdfBytes);
-
-        // Remove the original uploaded file
-        fs.unlinkSync(pdfPath);
-
-        res.send(`
-            <h1>PDF signed successfully!</h1>
-            <p><a href="/download-signed-pdf">Download signed PDF</a></p>
-        `);
-    } catch (err) {
-        console.error("Failed to sign the PDF:", err);
-        res.status(500).send('Failed to sign the PDF.');
+    if (!req.files || Object.keys(req.files).length === 0) {
+        return res.status(400).send('No files were uploaded.');
     }
-});
 
-app.get('/download-signed-pdf', (req, res) => {
-    const filePath = path.join(__dirname, 'signed_document.pdf');
-    res.download(filePath);
+    const pdfFile = req.files.pdf;
+    const pdfDoc = await PDFDocument.load(pdfFile.data);
+    pdfDoc.registerFontkit(fontkit);
+    const fontBytes = fs.readFileSync('./arial.ttf');
+    const customFont = await pdfDoc.embedFont(fontBytes);
+
+    const pages = pdfDoc.getPages();
+    const firstPage = pages[0];
+    const { width, height } = firstPage.getSize();
+    firstPage.drawText('חתימה דיגיטלית', {
+        x: 50,
+        y: height - 100,
+        size: 30,
+        font: customFont,
+        color: rgb(0, 0.53, 0.71),
+    });
+
+    const pdfBytes = await pdfDoc.save();
+
+    const downloadsDir = path.join(os.homedir(), 'Downloads');
+    const outputPath = path.join(downloadsDir, 'signed_document.pdf');
+
+    fs.writeFileSync(outputPath, pdfBytes);
+
+    res.send(`
+        <h2>PDF signed successfully!</h2>
+        <p>The signed PDF has been saved to your Downloads folder.</p>
+        <a href="/">Go back</a>
+    `);
 });
 
 app.listen(3000, () => {
