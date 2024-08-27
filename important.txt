@@ -11,6 +11,12 @@ node app.js
 
 http://localhost:3000
 
+git init
+git add .
+git commit -m 
+git push origin master
+
+git status
 git add .
 git commit -m 
 git push origin master

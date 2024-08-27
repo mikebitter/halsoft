@@ -1,50 +1,283 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF Signing App</title>
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <!-- Signature Pad -->
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@2.3.2/dist/signature_pad.min.js"></script>
+    <!-- PDF-Lib -->
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <style>
+        header {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            background-color: white;
+            z-index: 1000;
+            padding: 10px 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        body {
+            margin-top: 80px; /* מוודא שהתוכן מתחת לכותרת */
+            text-align: center; /* ממרכז את התוכן */
+        }
+
+        #pdf-container {
+            position: relative;
+            border: 1px solid #000;
+            display: inline-block;
+            margin-top: 20px;
+        }
+        #pdf-canvas {
+            display: block; /* לוודא שהקנבס מוצג */
+        }
+        #signature-pad-container {
+            display: none; /* מסתיר את הקנבס הקטן בהתחלה */
+            position: absolute;
+            top: 100px;
+            left: 100px;
+        }
+        #signature-pad {
+            width: 200px;
+            height: 100px;
+            border: 2px solid #000;
+            background-color: rgba(255, 255, 255, 0.5);
+        }
+        #move-button {
+            display: none;
+            position: absolute;
+            padding: 5px 10px;
+            font-size: 14px;
+            z-index: 10;
+            top: 0;
+            left: 210px;
+        }
+        #save-button, #cancel-button {
+            display: none;
+            margin-top: 10px;
+            padding: 5px 10px;
+            font-size: 14px;
+            margin-left: 5px; /* מוסיף רווח בין הכפתורים */
+        }
+        #pdf-upload {
+            display: inline-block;
+            margin-top: 20px;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+        }
+        #controls > button {
+            margin-left: 10px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Upload a PDF to Sign</h1>
-    <form id="uploadForm" enctype="multipart/form-data">
-        <input type="file" id="pdf" name="pdf" accept="application/pdf" required>
-        <button type="submit">Upload and Sign</button>
-    </form>
-    <p id="responseMessage"></p>
+    <header>
+        <h1>PDF Signing App</h1>
+        <div id="controls">
+            <input type="file" id="pdf-upload" accept="application/pdf" />
+            <button id="save-button">SAVE</button>
+            <button id="cancel-button">CANCEL</button>
+        </div>
+    </header>
+    <div id="pdf-container">
+        <canvas id="pdf-canvas"></canvas>
+        <div id="signature-pad-container">
+            <canvas id="signature-pad"></canvas>
+            <button id="move-button">MOVE</button>
+        </div>
+    </div>
 
     <script>
-        const form = document.getElementById('uploadForm');
-        const responseMessage = document.getElementById('responseMessage');
+        const pdfUpload = document.getElementById('pdf-upload');
+        const pdfCanvas = document.getElementById('pdf-canvas');
+        const signaturePadContainer = document.getElementById('signature-pad-container');
+        const signaturePadCanvas = document.getElementById('signature-pad');
+        const moveButton = document.getElementById('move-button');
+        const saveButton = document.getElementById('save-button');
+        const cancelButton = document.getElementById('cancel-button');
+        const pdfContainer = document.getElementById('pdf-container');
+        const pdfCtx = pdfCanvas.getContext('2d');
+        let signaturePad;
+        let pdfjsDoc = null;
+        let pdfBytes = null;
+        const scale = 1.5;
+        const pageNum = 1;
+        let isDrawing = false;
+        let isDragging = false;
 
-        form.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const formData = new FormData(form);
+        function initializeSignaturePad() {
+            signaturePad = new SignaturePad(signaturePadCanvas, {
+                backgroundColor: 'rgba(0, 0, 0, 0)',
+                penColor: 'blue'
+            });
+        }
+
+        pdfUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file || file.type !== 'application/pdf') {
+                alert('אנא העלה קובץ PDF תקין.');
+                return;
+            }
+            const fileReader = new FileReader();
+            fileReader.onload = function() {
+                pdfBytes = new Uint8Array(this.result);
+                pdfjsLib.getDocument(pdfBytes).promise.then((doc) => {
+                    pdfjsDoc = doc;
+                    renderPage(pageNum);
+                }).catch((error) => {
+                    console.error('שגיאה בטעינת ה-PDF:', error);
+                });
+            };
+            fileReader.readAsArrayBuffer(file);
+        });
+
+        function renderPage(num) {
+            pdfjsDoc.getPage(num).then((page) => {
+                const viewport = page.getViewport({ scale: scale });
+                pdfCanvas.width = viewport.width;
+                pdfCanvas.height = viewport.height;
+
+                pdfContainer.style.width = viewport.width + 'px';
+                pdfContainer.style.height = viewport.height + 'px';
+
+                const renderContext = {
+                    canvasContext: pdfCtx,
+                    viewport: viewport
+                };
+                page.render(renderContext).promise.then(() => {
+                    pdfCanvas.style.display = 'block';
+                    signaturePadContainer.style.display = 'block'; // הצגת הקנבס הקטן לאחר טעינת ה-PDF
+                    initializeSignaturePad();
+                    saveButton.style.display = 'inline-block';
+                    cancelButton.style.display = 'inline-block';
+                    moveButton.style.display = 'block';
+                });
+            }).catch((error) => {
+                console.error('שגיאה בהצגת הדף:', error);
+            });
+        }
+
+        let dragStartX, dragStartY;
+
+        signaturePadContainer.addEventListener('mousedown', (e) => {
+            if (!isDrawing) {
+                isDragging = true;
+                dragStartX = e.clientX - signaturePadContainer.offsetLeft;
+                dragStartY = e.clientY - signaturePadContainer.offsetTop;
+                signaturePad.off();
+                signaturePadContainer.style.cursor = 'move';
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                let x = e.clientX - dragStartX;
+                let y = e.clientY - dragStartY;
+
+                x = Math.max(0, Math.min(x, pdfCanvas.width - signaturePadContainer.offsetWidth));
+                y = Math.max(0, Math.min(y, pdfCanvas.height - signaturePadContainer.offsetHeight));
+
+                signaturePadContainer.style.left = x + 'px';
+                signaturePadContainer.style.top = y + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                signaturePadContainer.style.cursor = 'move';
+                moveButton.innerText = 'DRAW';
+                moveButton.style.display = 'block';
+            }
+        });
+
+        moveButton.addEventListener('click', () => {
+            if (moveButton.innerText === 'DRAW') {
+                isDrawing = true;
+                signaturePad.on();
+                moveButton.innerText = 'MOVE';
+                signaturePadContainer.style.cursor = 'crosshair';
+            } else {
+                isDrawing = false;
+                signaturePad.off();
+                signaturePadContainer.style.cursor = 'move';
+                moveButton.innerText = 'DRAW';
+            }
+        });
+
+        signaturePadCanvas.addEventListener('mouseup', () => {
+            if (isDrawing && !signaturePad.isEmpty()) {
+                saveButton.style.display = 'inline-block';
+                cancelButton.style.display = 'inline-block';
+            }
+        });
+
+        saveButton.addEventListener('click', async () => {
+            if (signaturePad.isEmpty()) {
+                alert('אנא ספק חתימה.');
+                return;
+            }
+            const signatureImage = signaturePad.toDataURL('image/png');
 
             try {
-                const response = await fetch('/sign-pdf', {
-                    method: 'POST',
-                    body: formData
+                const pdfjsLoaded = await pdfjsLib.getDocument(pdfBytes).promise;
+                const page = await pdfjsLoaded.getPage(pageNum);
+
+                const viewport = page.getViewport({ scale: 1 });
+                const pdfWidth = viewport.width;
+                const pdfHeight = viewport.height;
+
+                const xRatio = pdfWidth / pdfCanvas.width;
+                const yRatio = pdfHeight / pdfCanvas.height;
+
+                const xPos = parseInt(signaturePadContainer.style.left) * xRatio;
+                const yPos = (pdfCanvas.height - parseInt(signaturePadContainer.style.top) - signaturePadContainer.offsetHeight) * yRatio;
+                const sigWidth = signaturePadCanvas.width * xRatio;
+                const sigHeight = signaturePadCanvas.height * yRatio;
+
+                const pdfLibDoc = await PDFLib.PDFDocument.load(pdfBytes);
+                const pdfLibPages = pdfLibDoc.getPages();
+                const firstPage = pdfLibPages[pageNum - 1];
+
+                const pngImage = await pdfLibDoc.embedPng(signatureImage);
+                firstPage.drawImage(pngImage, {
+                    x: xPos,
+                    y: yPos,
+                    width: sigWidth,
+                    height: sigHeight,
                 });
 
-                if (response.ok) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.style.display = 'none';
-                    a.href = url;
-                    a.download = 'signed_document.pdf';
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    responseMessage.textContent = 'PDF signed successfully!';
-                } else {
-                    responseMessage.textContent = 'Failed to sign the PDF.';
-                }
+                const modifiedPdfBytes = await pdfLibDoc.save();
+
+                const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'signed_document.pdf';
+                link.click();
+
+                URL.revokeObjectURL(url);
+
+                // לאחר שמירה, רענן את הדף כדי לאפס את הכל
+                location.reload();
             } catch (error) {
-                console.error('Error:', error);
-                responseMessage.textContent = 'An error occurred while signing the PDF.';
+                console.error('שגיאה בשמירת ה-PDF החתום:', error);
             }
+        });
+
+        cancelButton.addEventListener('click', () => {
+            // רענון הדף כולו כדי לאפס את כל המצב
+            location.reload();
         });
     </script>
 </body>

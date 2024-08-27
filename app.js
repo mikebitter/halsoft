@@ -1,69 +1,104 @@
 const express = require('express');
-const fileUpload = require('express-fileupload');
 const fs = require('fs');
-const path = require('path');
-const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+const { PDFDocument, rgb } = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
-const os = require('os');
+const multer = require('multer');
+const path = require('path');
 
 const app = express();
-app.use(fileUpload());
+
+const upload = multer({ dest: 'uploads/' });
+
 app.use(express.static('public'));
 
-// דף הבית שמציג טופס להעלאת קובץ
 app.get('/', (req, res) => {
-    res.send(`
-        <h1>Upload a PDF to Sign</h1>
-        <form ref='uploadForm' 
-            id='uploadForm' 
-            action='/sign-pdf' 
-            method='post' 
-            encType="multipart/form-data">
-            <input type="file" name="pdf" />
-            <input type='submit' value='Upload and Sign' />
-        </form>     
-    `);
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.post('/sign-pdf', async (req, res) => {
-    console.log("Uploading PDF file...");
-    console.log(req.files.pdf); // לוג של הקובץ המתקבל
+app.post('/sign-pdf', upload.single('pdf'), async (req, res) => {
+    try {
+        console.log('Received request to sign PDF');
 
-    if (!req.files || Object.keys(req.files).length === 0) {
-        return res.status(400).send('No files were uploaded.');
+        let graphicSignature = req.body.signature;
+        let signatureX = parseFloat(req.body.signatureX);
+        let signatureY = parseFloat(req.body.signatureY);
+
+        const pdfBytes = fs.readFileSync(req.file.path);
+        const pdfDoc = await PDFDocument.load(pdfBytes);
+        pdfDoc.registerFontkit(fontkit);
+        const pages = pdfDoc.getPages();
+        const firstPage = pages[0];
+
+        const pageWidth = firstPage.getWidth();
+        const pageHeight = firstPage.getHeight();
+
+        console.log('Page width:', pageWidth);
+        console.log('Page height:', pageHeight);
+        console.log('Original Signature X:', signatureX);
+        console.log('Original Signature Y:', signatureY);
+
+        // Convert coordinates to match the PDF's dimensions
+        const canvasWidth = parseFloat(req.body.canvasWidth);
+        const canvasHeight = parseFloat(req.body.canvasHeight);
+
+        // המרה נכונה של קואורדינטות ה-X וה-Y
+        signatureX = (signatureX / canvasWidth) * pageWidth;
+        signatureY = ((canvasHeight - signatureY) / canvasHeight) * pageHeight;
+
+        // הזזת החתימה שמאלה ולמעלה
+        const xOffset = -110;  // להזיז 110 פיקסלים שמאלה
+        const yOffset = 20;    // להזיז 20 פיקסלים למעלה
+        signatureX += xOffset;
+        signatureY += yOffset;
+
+        console.log('Adjusted Signature X:', signatureX);
+        console.log('Adjusted Signature Y:', signatureY);
+
+        if (graphicSignature) {
+            console.log('Graphic signature provided');
+            try {
+                const pngImageBytes = Buffer.from(graphicSignature.split(',')[1], 'base64');
+                const pngImage = await pdfDoc.embedPng(pngImageBytes);
+                console.log('Signature image embedded successfully.');
+
+                firstPage.drawImage(pngImage, {
+                    x: signatureX,
+                    y: signatureY,
+                    width: 100,
+                    height: 50,
+                });
+                console.log('Signature image drawn on the PDF.');
+            } catch (error) {
+                console.error('Error embedding signature image:', error);
+                res.status(500).send('Error embedding signature image.');
+                return;
+            }
+        } else {
+            res.status(400).send('No valid signature provided.');
+            return;
+        }
+
+        const signedPdfBytes = await pdfDoc.save();
+        const outputPath = path.join(__dirname, 'downloads', `signed-${req.file.originalname}`);
+        fs.writeFileSync(outputPath, signedPdfBytes);
+        console.log('Signed PDF saved to:', outputPath);
+
+        res.download(outputPath, err => {
+            if (err) {
+                res.status(500).send('Error sending file');
+            } else {
+                console.log('File sent successfully');
+            }
+
+            fs.unlinkSync(req.file.path);
+            fs.unlinkSync(outputPath);
+        });
+    } catch (error) {
+        console.error('Error signing PDF:', error);
+        res.status(500).send('Error signing PDF');
     }
-
-    const pdfFile = req.files.pdf;
-    const pdfDoc = await PDFDocument.load(pdfFile.data);
-    pdfDoc.registerFontkit(fontkit);
-    const fontBytes = fs.readFileSync('./arial.ttf');
-    const customFont = await pdfDoc.embedFont(fontBytes);
-
-    const pages = pdfDoc.getPages();
-    const firstPage = pages[0];
-    const { width, height } = firstPage.getSize();
-    firstPage.drawText('חתימה דיגיטלית', {
-        x: 50,
-        y: height - 100,
-        size: 30,
-        font: customFont,
-        color: rgb(0, 0.53, 0.71),
-    });
-
-    const pdfBytes = await pdfDoc.save();
-
-    const downloadsDir = path.join(os.homedir(), 'Downloads');
-    const outputPath = path.join(downloadsDir, 'signed_document.pdf');
-
-    fs.writeFileSync(outputPath, pdfBytes);
-
-    res.send(`
-        <h2>PDF signed successfully!</h2>
-        <p>The signed PDF has been saved to your Downloads folder.</p>
-        <a href="/">Go back</a>
-    `);
 });
 
 app.listen(3000, () => {
-    console.log('App listening at http://localhost:3000');
+    console.log('Server started on http://localhost:3000');
 });
